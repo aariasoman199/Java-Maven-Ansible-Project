@@ -1,0 +1,160 @@
+---
+- name: "Building Java Maven Docker Image and Pushing Image to DockerHub"
+  hosts: build
+  become: true
+  vars_files:
+    - dockerhub.yaml
+  vars:
+     repo_url: "https://github.com/aariasoman199/Java-Maven-Ansible-Project.git"
+     packages:
+        - git
+        - docker
+        - java-1.8.0-openjdk-devel
+        - maven
+        - python3-pip
+     images:
+        repository: "aariasoman"
+        name: "java-maven-app"
+
+  tasks: 
+
+    - name: "Installing packages"
+      yum:
+        name: "{{ packages }}"
+        state: present
+
+    - name: "Adding ec2-user to docker group"
+      user:
+        name: "docker"
+        groups:
+          - docker
+        append: yes
+
+    - name: "starting/enabling docker"
+      service:
+        name: docker
+        state: started
+        enabled: true
+
+    - name: "Installing docker module"
+      pip:
+        name: "docker-py"
+        state: present
+
+    - name: "clone github repo {{repo_url}}"
+      git:
+        repo: "{{repo_url}}"
+        dest: "/var/java-maven-app-repo"
+        version: "master"
+      register: repository_status
+
+    - name: "Build Maven project"
+      when: repository_status.changed
+      command: mvn clean  package
+      args:
+        chdir: "/var/java-maven-app-repo/Application/"
+
+    - name: "Building docker image"
+      when: repository_status.changed
+      community.docker.docker_image:
+        name: "{{ images.repository}}/{{images.name}}"
+        source: build
+        build:
+          path: "/var/java-maven-app-repo/Application/"
+        force_tag: true
+        tag: "{{ item }}"
+      loop:
+        - "latest"
+        - "{{repository_status.after}}"
+
+    - name: "Login into docker hub"
+      when: repository_status.changed
+      community.docker.docker_login:
+        username: "{{ dockerhub_username }}"
+        password: "{{ dockerhub_password }}"
+
+    - name: "Pushing docker image to dockerhub"
+      when: repository_status.changed
+      community.docker.docker_image:
+        name: "{{ images.repository}}/{{images.name}}"
+        source: local
+        push: true
+        tag: "{{ item }}"
+      loop:
+        - "latest"
+        - "{{repository_status.after}}"
+
+    - name: "Deleting local docker image"
+      when: repository_status.changed
+      community.docker.docker_image:
+        name: "{{ images.repository}}/{{images.name}}"
+        source: local
+        state: absent
+        tag: "{{ item }}"
+      loop:
+        - "latest"
+        - "{{repository_status.after}}"
+
+    - name: "Log out from docker hub"
+      when: repository_status.changed
+      community.docker.docker_login:
+        state: absent
+
+
+- name: "Deploying Java Maven Docker image"
+  hosts: deploy
+  become: true
+  collections:
+    - community.docker
+  vars:
+    packages:
+      - docker
+      - python3-pip
+    images:
+      repository: "aariasoman"
+      name: "java-maven-app"
+  tasks:
+
+    - name: "Installing packages"
+      yum:
+        name: "{{packages}}"
+        state: present
+
+    - name: "Adding ec2-user to docker group"
+      user:
+        name: "docker"
+        groups:
+          - docker
+        append: yes
+
+    - name: "starting/enabling docker"
+      service:
+        name: docker
+        state: started
+        enabled: true
+
+    - name: "Installing docker module"
+      pip:
+        name: "docker-py"
+        state: present
+
+    - name: "pulling latest image {{ images.repository}}/{{images.name}} "
+      community.docker.docker_image:
+        name: "{{ images.repository}}/{{images.name}}"
+        tag: latest
+        source: pull
+        force_source: true
+      register: image_status
+
+    - name: "Creating container from {{ images.repository}}/{{images.name}} image"
+      when: image_status.changed
+      community.docker.docker_container:
+        name: javaapp
+        image: "{{ images.repository }}/{{ images.name }}:latest"
+        state: started
+        restart_policy: always
+        recreate: yes
+        published_ports:
+          - "80:8080"
+
+
