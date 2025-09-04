@@ -14,6 +14,7 @@ public class HomeController {
         try {
             String hostname = InetAddress.getLocalHost().getHostName();
             model.addAttribute("hostname", hostname);
+	    model.addAttribute("message", "Welcome to the updated Java 17 Web App!");
         } catch (Exception e) {
             model.addAttribute("hostname", "Unknown");
         }
